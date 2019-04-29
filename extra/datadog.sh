@@ -34,6 +34,14 @@ sed -i -e"s|^.*additional_checksd:.*$|additional_checksd: $DD_CONF_DIR/checks.d|
 APP_DATADOG="/app/datadog"
 APP_DATADOG_CONF_DIR="$APP_DATADOG/conf.d"
 
+# Datadog.conf yaml addition (use sparingly, since parsing YAML is difficult)
+APP_DATADOG_CONF_YAML_ADDON="/app/datadog/datadog-append.yaml"
+
+# Shell script to run additional functionality, as well as allowing
+# environmental variables to be changed
+APP_DATADOG_EXTENSION="/app/datadog/startup.sh"
+
+
 for file in "$APP_DATADOG_CONF_DIR"/*.yaml; do
   test -e "$file" || continue # avoid errors when glob doesn't match anything
   filename="$(basename -- "$file")"
@@ -72,6 +80,12 @@ fi
 # For a list of env vars to override datadog.yaml, see:
 # https://github.com/DataDog/datadog-agent/blob/master/pkg/config/config.go#L145
 
+
+# Read in files and extend $DATADOG_CONF with them if necessary
+if [ -f ${APP_DATADOG_CONF_YAML_ADDON} ]; then
+    cat ${APP_DATADOG_CONF_YAML_ADDON} >> ${DATADOG_CONF}
+fi
+
 if [ -z "$DD_API_KEY" ]; then
   echo "DD_API_KEY environment variable not set. Run: heroku config:add DD_API_KEY=<your API key>"
   DISABLE_DATADOG_AGENT=1
@@ -99,6 +113,12 @@ else
   if [ "$DD_LOG_LEVEL_LOWER" == "debug" ]; then
     echo "WARNING: DD_HOSTNAME has been set. Setting this environment variable may result in metrics errors. To remove it, run: heroku config:unset DD_HOSTNAME"
   fi
+fi
+
+# Allow Apps to extend functionality, like disabling the Agent or changing
+# environmental variables
+if [ -f $APP_DATADOG_EXTENSION ]; then
+    . ${APP_DATADOG_EXTENSION}
 fi
 
 # Disable core checks (these read the host, not the dyno).
