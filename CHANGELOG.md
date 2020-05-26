@@ -7,6 +7,110 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased & outstanding issues]
 - Non-https repo url and apt fetching
 
+## [1.17] - 2020-05-04
+
+### Added
+- Datadog agent pinned versions are now `6.19.0` and `7.19.0`
+- Added documentation around running Docker in Heroku
+- DD_TAGS now support space separated tags
+- DD_TAGS can now be modified in the pre-run script
+
+## [1.16] - 2020-03-18
+
+### Added
+- Datadog agent pinned versions are now `6.18.0` and `7.18.0`
+
+### Fixed
+- DD_LOG_LEVEL is now honored for all agents
+
+## [1.15] - 2020-02-07
+
+### Added
+- Datadog agent pinned versions are now `6.17.0` and `7.17.0`
+
+## [1.14] - 2020-01-22
+
+### Added
+- Datadog agent pinned versions are now `6.16.1` and `7.16.1`
+
+### Fixed
+- Fixed `run_path` for the logs collector
+
+## [1.13] - 2019-12-18
+
+### Added
+- Datadog's buildpack now supports Agent versions 7.16 forward
+- Datadog agent pinned versions are now `6.16.0` and `7.16.0`
+
+## [1.12] - 2019-12-13
+
+### Added
+- Datadog agent pinned version is now `6.15.1`
+- Added a deprecation warning if users are using Python 2 in 6.x.
+
+### Fixed
+- Fixed `datadog.sh` to run correctly in flynn.io.
+
+## [1.11] - 2019-12-05
+
+### Added
+
+- Added `buildpackversion` tag with the version of the buildpack.
+- Documentation section about rebuilding slugs when modifying certain options.
+- Documenation about the order for slug layers.
+
+### Fixed
+- Fixed `mcache` integration for python 2.
+
+### Changed
+- Documentation on how to collect system metrics from the dynos.
+
+## [1.10] - 2019-10-22
+
+### Added
+
+- `agent-wrapper` binary. This executable bash script will be added to the `PATH` when starting a dyno using Datadog's buildpack to help running agent's debugging/status commands.
+
+### Changed
+- `LD_LIBRARY_PATH` in `datadog.sh` is not exported anymore, to avoid conflicts with Heroku's runtime
+- Compilation linking paths are not exported anymore
+
+## [1.9] - 2019-10-08
+
+### Added
+- Slug size reduction:
+
+  The buildpack now removes the `process-agent` and `trace-agent` agent binaries, if the user has process monitoring and/or APM disabled on their configuration, to reduce slug size. Added documentation.
+- Improved `hostname` related documentation
+
+### Removed
+- To reduce the slug size, the buildpack removes some libraries not used in a Heroku environment:
+  * `kubernetes`
+  * `openstack`
+  * `pysnmp_mibs`
+  * `pyVim` and `pyVmomi`
+
+## [1.8] - 2019-09-23
+
+### Added
+- Datadog agent pinned version is now `6.14.0`
+- Added unit tests for the buildpack
+
+### Changed
+- The environment variable to select the python version is now `DD_PYTHON_VERSION`. Added documentation about this
+
+### Fixed
+- Fixed `start` command deprecation (#126)
+
+## [1.7] - 2019-08-30
+
+### Added
+- Datadog agent versions are now pinned to a specific version if `DD_AGENT_VERSION` is not set (currently 6.13.0)
+- For versions 6.14 onwards, agent ships with both Python2 and Python3. Set `PYTHON_VERSION` to "2" or "3" to select the version of the Python runtime.
+
+### Fixed
+- Fixed `DD_TAGS` documentation
+
 ## [1.6.5] - 2019-07-31
 Merged PR from @dirk to fix tag injection for Agent 6.12+
 
