@@ -54,10 +54,6 @@ done
 # Datadog.conf yaml addition (use sparingly, since parsing YAML is difficult)
 APP_DATADOG_CONF_YAML_ADDON="/app/datadog/datadog-append.yaml"
 
-# Shell script to run additional functionality, as well as allowing
-# environmental variables to be changed
-APP_DATADOG_EXTENSION="/app/datadog/startup.sh"
-
 for file in "$APP_DATADOG_CONF_DIR"/*.yaml; do
   test -f "$file" || continue # avoid errors when glob doesn't match anything
   filename="$(basename -- "$file")"
