@@ -8,7 +8,11 @@ DD_RUN_DIR="$DD_DIR/run"
 export DD_BIN_DIR="$DD_DIR/bin/agent"
 DD_LOG_DIR="$APT_DIR/var/log/datadog"
 DD_CONF_DIR="$APT_DIR/etc/datadog-agent"
+DD_INSTALL_INFO="$DD_CONF_DIR/install_info"
 export DATADOG_CONF="$DD_CONF_DIR/datadog.yaml"
+export INTEGRATIONS_CONF="$DD_CONF_DIR/conf.d"
+export POSTGRES_CONF="$INTEGRATIONS_CONF/postgres.d"
+export REDIS_CONF="$INTEGRATIONS_CONF/redisdb.d"
 
 # Update Env Vars with new paths for apt packages
 export PATH="$APT_DIR/usr/bin:$DD_BIN_DIR:$PATH"
@@ -26,13 +30,29 @@ DD_PROC_LOG="$DD_LOG_DIR/datadog-proc.log"
 # Move Datadog config files into place
 cp "$DATADOG_CONF.example" "$DATADOG_CONF"
 
-# Update the Datadog conf yaml with the correct conf.d and checks.d
+# Update the Datadog conf yaml with the correct conf.d and checks.d and the correct run path
 sed -i -e"s|^.*confd_path:.*$|confd_path: $DD_CONF_DIR/conf.d|" "$DATADOG_CONF"
-sed -i -e"s|^.*additional_checksd:.*$|additional_checksd: $DD_CONF_DIR/checks.d|" "$DATADOG_CONF"
+sed -i -e"s|^.*additional_checksd:.*$|additional_checksd: $DD_CONF_DIR/checks.d\nrun_path: $DD_RUN_DIR|" "$DATADOG_CONF"
+
+# Update the Datadog conf yaml to disable cloud provider metadata
+sed -i -e"s|^.*cloud_provider_metadata:.*$|cloud_provider_metadata: []|" "$DATADOG_CONF"
 
 # Include application's datadog configs
-APP_DATADOG="/app/datadog"
+APP_DATADOG_DEFAULT="/app/datadog"
+APP_DATADOG="${DD_HEROKU_CONF_FOLDER:=$APP_DATADOG_DEFAULT}"
 APP_DATADOG_CONF_DIR="$APP_DATADOG/conf.d"
+APP_DATADOG_CHECKS_DIR="$APP_DATADOG/checks.d"
+
+# Agent integrations configuration
+for dir in "$APP_DATADOG_CONF_DIR"/*; do
+  test -d "$dir" || continue # only match directories
+  cp -R "$dir" "$DD_CONF_DIR/conf.d/"
+done
+
+# Agent integrations configuration - Deprecated
+
+# Datadog.conf yaml addition (use sparingly, since parsing YAML is difficult)
+APP_DATADOG_CONF_YAML_ADDON="/app/datadog/datadog-append.yaml"
 
 # Datadog.conf yaml addition (use sparingly, since parsing YAML is difficult)
 APP_DATADOG_CONF_YAML_ADDON="/app/datadog/datadog-append.yaml"
@@ -43,18 +63,36 @@ APP_DATADOG_EXTENSION="/app/datadog/startup.sh"
 
 
 for file in "$APP_DATADOG_CONF_DIR"/*.yaml; do
-  test -e "$file" || continue # avoid errors when glob doesn't match anything
+  test -f "$file" || continue # avoid errors when glob doesn't match anything
   filename="$(basename -- "$file")"
   filename="${filename%.*}"
   mkdir -p "$DD_CONF_DIR/conf.d/${filename}.d"
   cp "$file" "$DD_CONF_DIR/conf.d/${filename}.d/conf.yaml"
 done
 
+# Custom checks configuration
+for file in "$APP_DATADOG_CHECKS_DIR"/*.yaml; do
+  test -e "$file" || continue # avoid errors when glob doesn't match anything
+  cp "$file" "$DD_CONF_DIR/conf.d/"
+done
+
+# Custom checks code
+for file in "$APP_DATADOG_CHECKS_DIR"/*.py; do
+  test -e "$file" || continue # avoid errors when glob doesn't match anything
+  cp "$file" "$DD_CONF_DIR/checks.d/"
+done
+
 # Add tags to the config file
 DYNOHOST="$(hostname )"
 DYNOTYPE=${DYNO%%.*}
-BUILDPACKVERSION="dev"
+BUILDPACKVERSION="2.9"
 DYNO_TAGS="dyno:$DYNO dynotype:$DYNOTYPE buildpackversion:$BUILDPACKVERSION"
+
+# We want always to have the Dyno ID as a host alias to improve correlation
+export DD_HOST_ALIASES="$DYNOHOST"
+
+# Include install method
+echo -e "install_method:\n  tool: heroku\n  tool_version: heroku\n  installer_version: heroku-$BUILDPACKVERSION" > "$DD_INSTALL_INFO"
 
 if [ -n "$HEROKU_APP_NAME" ]; then
   DYNO_TAGS="$DYNO_TAGS appname:$HEROKU_APP_NAME"
@@ -72,10 +110,8 @@ if [ "$DD_PROCESS_AGENT" == "true" ]; then
 fi
 
 # Set the right path for the log collector
-if [ "$DD_LOGS_ENABLED" == "true" ]; then
-  sed -i -e"s|^# logs_config:$|logs_config:|" "$DATADOG_CONF"
-  sed -i -e"s|^logs_config:$|logs_config:\n  run_path: $DD_RUN_DIR|" "$DATADOG_CONF"
-fi
+sed -i -e"s|^# logs_config:$|logs_config:|" "$DATADOG_CONF"
+sed -i -e"s|^logs_config:$|logs_config:\n  run_path: $DD_RUN_DIR|" "$DATADOG_CONF"
 
 # For a list of env vars to override datadog.yaml, see:
 # https://github.com/DataDog/datadog-agent/blob/master/pkg/config/config.go#L145
@@ -136,12 +172,12 @@ if [ "$DD_PYTHON_VERSION" = "3" ]; then
   if [ "$DD_AGENT_VERSION" != "$(echo -e "$DD_AGENT_BASE_VERSION\n$DD_AGENT_VERSION" | sort -V | head -n1)" ]; then
     # If Python version is 3, it has to be specified in the configuration file
     echo 'python_version: 3' >> $DATADOG_CONF
+  fi
     # Update symlinks to Python binaries
     ln -sfn "$DD_DIR"/embedded/bin/python3 "$DD_DIR"/embedded/bin/python
     ln -sfn "$DD_DIR"/embedded/bin/python3-config "$DD_DIR"/embedded/bin/python-config
     ln -sfn "$DD_DIR"/embedded/bin/pip3 "$DD_DIR"/embedded/bin/pip
     ln -sfn "$DD_DIR"/embedded/bin/pydoc3 "$DD_DIR"/embedded/bin/pydoc
-  fi
 fi
 
 # Ensure all check and library locations are findable in the Python path.
@@ -153,15 +189,67 @@ DD_PYTHONPATH="$DD_DIR/embedded/lib/$PYTHON_DIR/lib-tk:$DD_PYTHONPATH"
 DD_PYTHONPATH="$DD_DIR/embedded/lib/$PYTHON_DIR/lib-dynload:$DD_PYTHONPATH"
 DD_PYTHONPATH="$DD_DIR/bin/agent/dist:$DD_PYTHONPATH"
 
-# For Python2 we need to add explicitely pip and setuptools dependencies
-if [ "$DD_PYTHON_VERSION" = "2" ]; then
-  PIP_PATH=$(find "$DD_DIR/embedded/lib/$PYTHON_DIR/site-packages" -maxdepth 1 -name "pip*egg")
-  SETUPTOOLS_PATH=$(find "$DD_DIR/embedded/lib/$PYTHON_DIR/site-packages" -maxdepth 1 -name "setuptools*egg")
-  DD_PYTHONPATH="$DD_PYTHONPATH:$SETUPTOOLS_PATH:$PIP_PATH"
-fi
+#  We need to add explicitely pip and setuptools dependencies
+PIP_PATH=$(find "$DD_DIR/embedded/lib/$PYTHON_DIR/site-packages" -maxdepth 1 -name "pip*egg")
+SETUPTOOLS_PATH=$(find "$DD_DIR/embedded/lib/$PYTHON_DIR/site-packages" -maxdepth 1 -name "setuptools*egg")
+DD_PYTHONPATH="$DD_PYTHONPATH:$SETUPTOOLS_PATH:$PIP_PATH"
 
 # Export agent's PYTHONPATH be used by the agent-wrapper
 export DD_PYTHONPATH="$DD_DIR/embedded/lib:$DD_PYTHONPATH"
+
+## Default integrations configuration
+
+# Update the Postgres configuration from above using the Heroku application environment variable
+if [ "$ENABLE_HEROKU_POSTGRES" == "true" ]; then
+  # The default connection URL is set in DATABASE_URL, but can be configured by the user
+  if [[ -z ${POSTGRES_URL_VAR} ]]; then
+    POSTGRES_URL_VAR="DATABASE_URL"
+  fi
+
+  cp "$POSTGRES_CONF/conf.yaml.example" "$POSTGRES_CONF/conf.yaml"
+
+  if [ -n "${!POSTGRES_URL_VAR}" ]; then
+    POSTGREGEX='^postgres://([^:]+):([^@]+)@([^:]+):([^/]+)/(.*)$'
+    if [[ ${!POSTGRES_URL_VAR} =~ $POSTGREGEX ]]; then
+      sed -i "s/^  - host:.*/  - host: ${BASH_REMATCH[3]}/" "$POSTGRES_CONF/conf.yaml"
+      sed -i "s/^    username:.*/    username: ${BASH_REMATCH[1]}/" "$POSTGRES_CONF/conf.yaml"
+      sed -i "s/^    # password:.*/    password: ${BASH_REMATCH[2]}/" "$POSTGRES_CONF/conf.yaml"
+      sed -i "s/^    # port:.*/    port: ${BASH_REMATCH[4]}/" "$POSTGRES_CONF/conf.yaml"
+      sed -i "s/^    # dbname:.*/    dbname: ${BASH_REMATCH[5]}/" "$POSTGRES_CONF/conf.yaml"
+      sed -i "s/^    # ssl:.*/    ssl: True/" "$POSTGRES_CONF/conf.yaml"
+      sed -i "s/^    disable_generic_tags:.*/    disable_generic_tags: false/" "$POSTGRES_CONF/conf.yaml"
+    fi
+  fi
+fi
+
+# Update the Redis configuration from above using the Heroku application environment variable
+if [ "$ENABLE_HEROKU_REDIS" == "true" ]; then
+  # The default connection URL is set in REDIS_URL, but can be configured by the user
+  if [[ -z ${REDIS_URL_VAR} ]]; then
+    REDIS_URL_VAR="REDIS_URL"
+  fi
+
+  cp "$REDIS_CONF/conf.yaml.example" "$REDIS_CONF/conf.yaml"
+
+  if [ -n "${!REDIS_URL_VAR}" ]; then
+    REDISREGEX='^redis(s?)://([^:]*):([^@]+)@([^:]+):([^/]+)/?(.*)$'
+    if [[ ${!REDIS_URL_VAR} =~ $REDISREGEX ]]; then
+      sed -i "s/^  - host:.*/  - host: ${BASH_REMATCH[4]}/" "$REDIS_CONF/conf.yaml"
+      sed -i "s/^    # password:.*/    password: ${BASH_REMATCH[3]}/" "$REDIS_CONF/conf.yaml"
+      sed -i "s/^    port:.*/    port: ${BASH_REMATCH[5]}/" "$REDIS_CONF/conf.yaml"
+      if [[ ! -z ${BASH_REMATCH[1]} ]]; then
+        sed -i "s/^    # ssl:.*/    ssl: True/" "$REDIS_CONF/conf.yaml"
+        sed -i "s/^    # ssl_cert_reqs:.*/    ssl_cert_reqs: 0/" "$REDIS_CONF/conf.yaml"
+      fi
+      if [[ ! -z ${BASH_REMATCH[2]} ]]; then
+        sed -i "s/^    # username:.*/    username: ${BASH_REMATCH[2]}/" "$REDIS_CONF/conf.yaml"
+      fi
+      if [[ ! -z ${BASH_REMATCH[6]} ]]; then
+        sed -i "s/^    # db:.*/    db: ${BASH_REMATCH[6]}/" "$REDIS_CONF/conf.yaml"
+      fi
+    fi
+  fi
+fi
 
 # Give applications a chance to modify env vars prior to running.
 # Note that this can modify existing env vars or perform other actions (e.g. modify the conf file).
@@ -180,6 +268,7 @@ else
   DD_TAGS="$DYNO_TAGS"
 fi
 
+export DD_VERSION="$DD_VERSION"
 export DD_TAGS="$DD_TAGS"
 if [ "$DD_LOG_LEVEL_LOWER" == "debug" ]; then
   echo "[DEBUG] Buildpack normalized tags: $DD_TAGS_NORMALIZED"
@@ -193,16 +282,19 @@ sed -i "s/^#   - role:database$/#   - role:database\n$DD_TAGS_YAML/" "$DATADOG_C
 # Agent versions 6.12 and later:
 sed -i "s/^\(## @param tags\)/$DD_TAGS_YAML\n\1/" "$DATADOG_CONF"
 
+# Export host type as dyno
+export DD_HEROKU_DYNO="true"
+
 # Execute the final run logic.
 if [ -n "$DISABLE_DATADOG_AGENT" ]; then
   echo "The Datadog Agent has been disabled. Unset the DISABLE_DATADOG_AGENT or set missing environment variables."
 else
   # Get the Agent version number
-  DD_VERSION="$(expr "$(bash -c "LD_LIBRARY_PATH=\"$DD_LD_LIBRARY_PATH\" $DD_BIN_DIR/agent version")" : 'Agent \([0-9]\+\.[0-9]\+.[0-9]\+\)')"
+  DATADOG_VERSION="$(expr "$(bash -c "LD_LIBRARY_PATH=\"$DD_LD_LIBRARY_PATH\" $DD_BIN_DIR/agent version")" : 'Agent \([0-9]\+\.[0-9]\+.[0-9]\+\)')"
 
   # Prior to Agent 6.4.1, the command is "start"
   RUN_VERSION="6.4.1"
-  if [ "$DD_VERSION" == "$(echo -e "$RUN_VERSION\n$DD_VERSION" | sort -V | head -n1)" ]; then
+  if [ "$DATADOG_VERSION" == "$(echo -e "$RUN_VERSION\n$DATADOG_VERSION" | sort -V | head -n1)" ]; then
     RUN_COMMAND="start"
   else
     RUN_COMMAND="run"
